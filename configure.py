@@ -160,18 +160,21 @@ def assign_roles(providers, role_map):
         t=Table(); t.add_column("Роль"); t.add_column("Модель")
         for k,title in ROLES: t.add_row(title.split("—")[0].strip(), role_map.get(k,"[red]—[/red]"))
         console.print(t)
-        rc=[Choice(f"{title} [{role_map.get(k,'—')}]",k) for k,title in ROLES]+[Choice("← назад",None)]
+        rc=[Choice(f"{title} [{role_map.get(k,'—')}]",k) for k,title in ROLES]+[Choice("← назад","__back__")]
         pick=questionary.select("Роль:",choices=rc).ask()
-        if not pick: return
-        all_m=[Choice(f"[{p['name']}] {m}",f"{p['name']}/{m}") for p in providers for m in p.get("enabled_models",[])]
-        all_m.insert(0,Choice("[ввести вручную]","__manual__"))
+        if pick is None or pick=="__back__": return
+        # Список моделей с кнопкой "назад"
+        all_m=[Choice("← назад (не менять)","__back__"), Choice("[ввести вручную]","__manual__")]
         cur=role_map.get(pick,"")
         if cur: all_m.insert(0,Choice(f"[оставить] {cur}","__keep__"))
+        for p in providers:
+            for m in p.get("enabled_models",[]):
+                all_m.append(Choice(f"[{p['name']}] {m}",f"{p['name']}/{m}"))
         sel=questionary.select(f"Модель для {pick}:",choices=all_m,use_search_filter=True,use_jk_keys=False).ask()
-        if sel is None or sel=="__keep__": continue
+        if sel is None or sel=="__keep__" or sel=="__back__": continue
         if sel=="__manual__":
-            pn=questionary.select("Провайдер:",[Choice(p["name"],p["name"]) for p in providers]).ask()
-            if not pn: continue
+            pn=questionary.select("Провайдер:",[Choice(p["name"],p["name"]) for p in providers]+[Choice("← отмена","__back__")]).ask()
+            if not pn or pn=="__back__": continue
             mn=questionary.text("Имя модели:").ask()
             if not mn: continue
             sel=f"{pn}/{mn.strip()}"
@@ -185,9 +188,9 @@ def edit_infra(settings):
             Choice("Стриминг","stream"), Choice("Параллельность кодеров","par"),
             Choice("Язык ответов","lang"), Choice("Anti-fluff","af"),
             Choice("Таймаут LLM","timeout"), Choice("Кастомные промпты","prompts"),
-            Choice("← назад",None),
+            Choice("← назад","__back__"),
         ]).ask()
-        if not a: return
+        if not a or a=="__back__": return
         if a=="rounds":
             v=questionary.text("Раунды (0-10):",default=str(settings.get("debate_rounds",1))).ask()
             if v and v.isdigit(): settings["debate_rounds"]=int(v)
