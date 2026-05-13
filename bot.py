@@ -96,7 +96,7 @@ def build_dispatcher(router: Router, admin_ids: set[int]) -> Dispatcher:
         if role not in ROLES:
             await m.answer(f"Неизвестная роль. Доступные: {', '.join(ROLES)}")
             return
-        router.set_role_model(role, model, settings.free_fallback_model or None)
+        router.set_role_model(role, model)
         await m.answer(f"OK. {role} → `{model}`", parse_mode="Markdown")
 
     @dp.message(F.text)

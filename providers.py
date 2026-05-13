@@ -64,13 +64,15 @@ class Router:
         self.providers = providers
         self.role_chain = role_chain
 
-    def set_role_model(self, role: str, primary_model: str, free_fallback: str | None) -> None:
-        """Меняет модель для роли на лету (используется /settings)."""
-        primary_name = "kiro" if "kiro" in self.providers else "free"
-        chain: list[tuple[str, str]] = [(primary_name, primary_model)]
-        if free_fallback and "free" in self.providers and primary_name != "free":
-            chain.append(("free", free_fallback))
-        self.role_chain[role] = chain
+    def set_role_model(self, role: str, full_string: str) -> None:
+        """Меняет модель для роли на лету. full_string = 'provider_name/model' или просто 'model'."""
+        parts = full_string.split("/", 1)
+        if len(parts) == 2:
+            provider_name, model = parts[0], parts[1]
+        else:
+            provider_name = next(iter(self.providers))
+            model = full_string
+        self.role_chain[role] = [(provider_name, model)]
 
     def get_role_model(self, role: str) -> str:
         chain = self.role_chain.get(role) or []

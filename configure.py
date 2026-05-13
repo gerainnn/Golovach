@@ -141,11 +141,11 @@ def add_provider(providers):
 
 def manage_models(providers):
     if not providers: console.print("  [yellow]Нет провайдеров[/yellow]"); return
-    choices=[Choice(f"{p['name']} ({len(p.get('enabled_models',[]))} акт.)",i) for i,p in enumerate(providers)]
-    choices.append(Choice("← назад",None))
-    idx=questionary.select("Провайдер:",choices=choices).ask()
-    if idx is None: return
-    p=providers[idx]; all_m=p.get("available_models",[]); enabled=set(p.get("enabled_models",[]))
+    choices=[Choice(f"{p['name']} ({len(p.get('enabled_models',[]))} акт.)", str(i)) for i,p in enumerate(providers)]
+    choices.append(Choice("← назад","__back__"))
+    idx_str=questionary.select("Провайдер:",choices=choices).ask()
+    if not idx_str or idx_str=="__back__": return
+    p=providers[int(idx_str)]; all_m=p.get("available_models",[]); enabled=set(p.get("enabled_models",[]))
     if not all_m:
         if questionary.confirm("Обновить список?",default=True).ask():
             all_m=fetch_models(p["base_url"],p["api_key"]); p["available_models"]=all_m; enabled=set(all_m)

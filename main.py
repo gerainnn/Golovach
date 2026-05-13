@@ -1,12 +1,14 @@
-"""Точка входа: собирает провайдеров, роутер, запускает бота."""
+"""Точка входа: собирает провайдеров из providers.json, роутер, запускает бота."""
 from __future__ import annotations
 
 import asyncio
 import logging
 
 from bot import start_bot
-from config import settings
+from config import settings, load_providers_config, load_infra_settings
 from providers import LLMProvider, ProviderConfig, Router
+
+ROLES = ("classifier", "orchestrator", "coder_a", "coder_b", "critic", "judge")
 
 
 def parse_admin_ids(raw: str) -> set[int]:
@@ -19,41 +21,52 @@ def parse_admin_ids(raw: str) -> set[int]:
 
 
 def build_router() -> Router:
-    providers: dict[str, LLMProvider] = {}
+    raw_providers = load_providers_config()
+    if not raw_providers:
+        raise RuntimeError(
+            "Нет настроенных провайдеров. Запусти: python setup.py (или python configure.py)"
+        )
 
-    if settings.kiro_api_key and settings.kiro_base_url:
-        providers["kiro"] = LLMProvider(
-            ProviderConfig("kiro", settings.kiro_base_url, settings.kiro_api_key),
-            timeout=settings.request_timeout,
-        )
-    if settings.free_api_key and settings.free_base_url:
-        providers["free"] = LLMProvider(
-            ProviderConfig("free", settings.free_base_url, settings.free_api_key),
-            timeout=settings.request_timeout,
-        )
+    infra = load_infra_settings()
+    timeout = infra.get("request_timeout", settings.request_timeout)
+
+    # Создаём LLMProvider для каждого провайдера из providers.json
+    providers: dict[str, LLMProvider] = {}
+    for p in raw_providers:
+        name = p.get("name", "")
+        base_url = p.get("base_url", "")
+        api_key = p.get("api_key", "")
+        if name and base_url and api_key:
+            providers[name] = LLMProvider(
+                ProviderConfig(name, base_url, api_key),
+                timeout=timeout,
+            )
 
     if not providers:
+        raise RuntimeError("Провайдеры в providers.json есть, но ни один не валиден.")
+
+    # Строим role_chain: для каждой роли берём "provider_name/model" из .env
+    # Формат значения: "provider_name/model_name" (первый / отделяет имя провайдера)
+    role_chain: dict[str, list[tuple[str, str]]] = {}
+    for role in ROLES:
+        full_string = getattr(settings, f"{role}_model", "")
+        if not full_string:
+            # Если роль не настроена — берём первого провайдера и пустую модель (упадёт при вызове)
+            continue
+        parts = full_string.split("/", 1)
+        if len(parts) == 2:
+            provider_name, model = parts[0], parts[1]
+        else:
+            # Нет '/' — берём первого провайдера
+            provider_name = next(iter(providers))
+            model = full_string
+        role_chain[role] = [(provider_name, model)]
+
+    if not role_chain:
         raise RuntimeError(
-            "Нужен хотя бы один провайдер. Заполни KIRO_* или FREE_* в .env"
+            "Ни одна роль не настроена. Запусти python configure.py и назначь модели."
         )
 
-    primary = "kiro" if "kiro" in providers else "free"
-    has_fallback = "free" in providers and primary != "free"
-
-    def chain(primary_model: str) -> list[tuple[str, str]]:
-        out = [(primary, primary_model)]
-        if has_fallback:
-            out.append(("free", settings.free_fallback_model))
-        return out
-
-    role_chain = {
-        "classifier": chain(settings.classifier_model),
-        "orchestrator": chain(settings.orchestrator_model),
-        "coder_a": chain(settings.coder_a_model),
-        "coder_b": chain(settings.coder_b_model),
-        "critic": chain(settings.critic_model),
-        "judge": chain(settings.judge_model),
-    }
     return Router(providers, role_chain)
 
 
