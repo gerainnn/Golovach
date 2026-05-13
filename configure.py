@@ -110,6 +110,32 @@ def fetch_models(url, key):
         elif isinstance(it,str): ids.append(it)
     return sorted(set(ids))
 
+def test_concurrency(base_url: str, api_key: str, model: str) -> bool:
+    """Проверяет поддерживает ли провайдер параллельные запросы (2 одновременных)."""
+    import asyncio
+    from openai import AsyncOpenAI
+
+    async def _test():
+        client = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=30)
+        msgs = [{"role": "user", "content": "Say 'ok'"}]
+        try:
+            # Пробуем 2 запроса параллельно
+            r1 = client.chat.completions.create(model=model, messages=msgs, max_tokens=5)
+            r2 = client.chat.completions.create(model=model, messages=msgs, max_tokens=5)
+            await asyncio.gather(r1, r2)
+            return True
+        except Exception as e:
+            if "429" in str(e) or "concurrency" in str(e).lower() or "rate" in str(e).lower():
+                return False
+            # Другая ошибка — не связана с concurrency, считаем что поддерживает
+            return True
+
+    try:
+        return asyncio.run(_test())
+    except Exception:
+        return False
+
+
 def add_provider(providers):
     console.print("\n[bold cyan]═ Добавление провайдера ═[/bold cyan]")
     name=questionary.text("Имя (напр. kiro, groq):").ask()
@@ -125,7 +151,7 @@ def add_provider(providers):
     else: url=preset
     key=questionary.password("API Key:").ask()
     if not key: return
-    p={"name":name,"base_url":url.strip(),"api_key":key.strip(),"available_models":[],"enabled_models":[]}
+    p={"name":name,"base_url":url.strip(),"api_key":key.strip(),"available_models":[],"enabled_models":[],"supports_parallel":True}
     console.print("  [dim]Ищу модели...[/dim]")
     models=fetch_models(p["base_url"],p["api_key"])
     if models:
@@ -134,6 +160,17 @@ def add_provider(providers):
         sel=questionary.checkbox(f"Включить модели (Space=вкл/выкл):", choices=[Choice(m,m,checked=True) for m in models]).ask()
         p["enabled_models"]=sel if sel else models
         console.print(f"  [green]Активных: {len(p['enabled_models'])}[/green]")
+
+        # Тест на параллельность
+        console.print("  [dim]Проверяю поддержку параллельных запросов...[/dim]")
+        test_model = p["enabled_models"][0] if p["enabled_models"] else models[0]
+        parallel = test_concurrency(p["base_url"], p["api_key"], test_model)
+        p["supports_parallel"] = parallel
+        if parallel:
+            console.print("  [green]✓ Параллельные запросы поддерживаются[/green]")
+        else:
+            console.print("  [yellow]⚠ Параллельные запросы НЕ поддерживаются (concurrency limit)[/yellow]")
+            console.print("  [yellow]  Код-задачи будут выполняться последовательно на этом провайдере[/yellow]")
     else:
         console.print("  [yellow]Моделей не найдено (введёшь вручную позже)[/yellow]")
     providers.append(p)
@@ -179,6 +216,19 @@ def assign_roles(providers, role_map):
             if not mn: continue
             sel=f"{pn}/{mn.strip()}"
         role_map[pick]=sel; console.print(f"  [green]{pick} → {sel}[/green]")
+        # Предупреждение если оба кодера на провайдере без parallel
+        if pick in ("coder_a", "coder_b"):
+            other = "coder_b" if pick == "coder_a" else "coder_a"
+            other_val = role_map.get(other, "")
+            if other_val and sel:
+                prov_a = sel.split("/", 1)[0]
+                prov_b = other_val.split("/", 1)[0]
+                if prov_a == prov_b:
+                    # Проверяем supports_parallel
+                    prov_obj = next((p for p in providers if p["name"] == prov_a), None)
+                    if prov_obj and not prov_obj.get("supports_parallel", True):
+                        console.print(f"  [yellow]⚠ Оба кодера на '{prov_a}' — он НЕ поддерживает параллельность![/yellow]")
+                        console.print(f"  [yellow]  Дебат будет последовательным (медленнее). Лучше разнести на разные провайдеры.[/yellow]")
 
 def edit_infra(settings):
     while True:
