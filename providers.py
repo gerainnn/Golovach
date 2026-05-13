@@ -31,24 +31,47 @@ class LLMProvider:
         )
 
     async def complete(self, model: str, messages: list[dict], **kwargs: Any) -> str:
-        resp = await self.client.chat.completions.create(
-            model=model, messages=messages, **kwargs
-        )
-        return resp.choices[0].message.content or ""
+        import asyncio as _aio
+        for attempt in range(5):
+            try:
+                resp = await self.client.chat.completions.create(
+                    model=model, messages=messages, **kwargs
+                )
+                return resp.choices[0].message.content or ""
+            except Exception as e:
+                if "429" in str(e) or "rate" in str(e).lower() or "concurrency" in str(e).lower():
+                    wait = 3 * (attempt + 1)
+                    log.warning("Rate limited (attempt %d), waiting %ds...", attempt+1, wait)
+                    await _aio.sleep(wait)
+                else:
+                    raise
+        raise RuntimeError(f"Rate limited after 5 retries for model {model}")
 
     async def stream(
         self, model: str, messages: list[dict], **kwargs: Any
     ) -> AsyncIterator[str]:
-        """Стриминг. Возвращает дельты текста по мере генерации."""
-        stream = await self.client.chat.completions.create(
-            model=model, messages=messages, stream=True, **kwargs
-        )
-        async for chunk in stream:
-            if not chunk.choices:
-                continue
-            delta = chunk.choices[0].delta.content
-            if delta:
-                yield delta
+        """Стриминг с retry при 429."""
+        import asyncio as _aio
+        for attempt in range(5):
+            try:
+                stream = await self.client.chat.completions.create(
+                    model=model, messages=messages, stream=True, **kwargs
+                )
+                async for chunk in stream:
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta.content
+                    if delta:
+                        yield delta
+                return  # success
+            except Exception as e:
+                if "429" in str(e) or "rate" in str(e).lower() or "concurrency" in str(e).lower():
+                    wait = 3 * (attempt + 1)
+                    log.warning("Stream rate limited (attempt %d), waiting %ds...", attempt+1, wait)
+                    await _aio.sleep(wait)
+                else:
+                    raise
+        raise RuntimeError(f"Stream rate limited after 5 retries for model {model}")
 
 
 class Router:
